@@ -2,6 +2,8 @@
 
 A lightweight, zero-dependency digital clock web application designed for both desktop and mobile devices. This app features real-time updates, customizable settings, and offline support.
 
+![Screenshot](./image.png)
+
 ---
 
 ## Features
