@@ -1,0 +1,844 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <title>Digital Clock</title>
+
+  <!-- PWA manifest & meta -->
+  <link rel="manifest" href="./manifest.json" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="Clock" />
+  <meta name="theme-color" content="#000000" />
+  <link rel="apple-touch-icon" href="./icon-192.png" />
+  <link rel="icon" type="image/png" href="./icon-192.png">
+
+
+  <!-- Seven Segment — classic LCD alarm-clock typeface -->
+  <link rel="stylesheet" href="https://fonts.cdnfonts.com/css/seven-segment" />
+
+  <style>
+    /* ─── Reset & Base ─────────────────────────────────────────────── */
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --clock-color: #ff2200;      /* Default: alarm-red */
+      --glow-color:  #ff220066;
+      --bg-color:    #000000;
+      --panel-bg:    rgba(15, 15, 15, 0.96);
+      --panel-border:rgba(255, 255, 255, 0.08);
+      --accent:      #ff2200;
+    }
+
+    html, body {
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      background: var(--bg-color);
+      touch-action: manipulation;    /* Prevents 300ms tap delay on mobile */
+      -webkit-tap-highlight-color: transparent;
+      user-select: none;
+    }
+
+    /* ─── Sunrise overlay — sits behind the clock ──────────────────── */
+    #sunrise-layer {
+      position: fixed;
+      inset: 0;
+      background: transparent;
+      z-index: 0;
+      pointer-events: none;
+      transition: none; /* Driven by JS requestAnimationFrame */
+    }
+
+    /* ─── Clock wrapper — centers and scales the digit string ───────── */
+    #clock-wrapper {
+      position: fixed;
+      inset: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 1;
+    }
+
+    /*
+     * #clock — flex container for the digit spans.
+     * Landscape : row    HH:MM on one line, fills viewport width.
+     * Portrait  : column HH on top, MM on bottom, no colon, each fills width.
+     * font-size is set by fitClock() and inherited by both digit spans.
+     */
+    #clock {
+      font-family: 'Seven Segment', monospace;
+      font-weight: 400;
+      color: var(--clock-color);
+      line-height: 1;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    /* Pair wrapper: HH or MM — flex row of two digit cells */
+    .clock-pair {
+      display: inline-flex;
+      letter-spacing: 0;
+    }
+
+    /*
+     * .clock-digit — single-character cell, always as wide as '8'.
+     *
+     * The ghost '8' renders INLINE via ::before, which makes the parent
+     * naturally as wide as an '8' glyph.  The real digit renders via
+     * ::after with position:absolute anchored to the SAME top-left origin
+     * as the ghost — so every segment of the real digit aligns exactly with
+     * the corresponding segment in the ghost, regardless of glyph width.
+     * (Centering would misplace narrow digits like '1'.)
+     *
+     * The digit character is driven by the data-d="N" attribute so no
+     * inner element is needed.
+     */
+    .clock-digit {
+      position: relative;
+      display: inline-block;
+      /* Width is set by the ::before '8' inline glyph */
+    }
+
+    /* Ghost — all segments dimly lit, inline so it sizes the parent */
+    .clock-digit::before {
+      content: '8';
+      color: var(--clock-color);
+      opacity: 0.10;
+      pointer-events: none;
+      /* Stays in normal flow → parent inherits its width */
+    }
+
+    /* Real digit — absolutely positioned from the SAME origin as ::before
+       so segment positions align 1-to-1 with the ghost */
+    .clock-digit::after {
+      content: attr(data-d);
+      position: absolute;
+      top: 0;
+      /* left: 0;                     /* same origin as the ghost glyph */
+      right: 0;                     /* same origin as the ghost glyph */
+      color: var(--clock-color);
+      text-shadow:
+        0 0 20px var(--glow-color),
+        0 0 60px var(--glow-color);
+      pointer-events: none;
+    }
+
+    /* Colon separator between HH and MM — hidden in portrait */
+    #clock-colon {
+      letter-spacing: -0.02em;
+      text-shadow:
+        0 0 20px var(--glow-color),
+        0 0 60px var(--glow-color);
+      margin: 0 0.04em;
+      line-height: 0.9;
+    }
+
+    /* Portrait: stack HH above MM, hide the colon */
+    @media (orientation: portrait) {
+      #clock { flex-direction: column; align-items: center; }
+      #clock-colon { display: none; }
+    }
+
+    /* ─── Settings gear icon ────────────────────────────────────────── */
+    #settings-btn {
+      position: fixed;
+      bottom: 28px;
+      right: 28px;
+      z-index: 10;
+      width: 48px;
+      height: 48px;
+      border-radius: 50%;
+      border: 1.5px solid rgba(255,255,255,0.18);
+      background: rgba(30,30,30,0.7);
+      color: rgba(255,255,255,0.7);
+      font-size: 22px;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      backdrop-filter: blur(6px);
+      -webkit-backdrop-filter: blur(6px);
+
+      /* Visibility is toggled via opacity + pointer-events */
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 0.4s ease, transform 0.2s ease;
+    }
+
+    #settings-btn.visible {
+      opacity: 1;
+      pointer-events: auto;
+    }
+
+    #settings-btn:hover  { transform: scale(1.1) rotate(30deg); }
+    #settings-btn:active { transform: scale(0.95); }
+
+    /* ─── Settings panel ────────────────────────────────────────────── */
+    #settings-panel {
+      position: fixed;
+      bottom: 90px;
+      right: 24px;
+      z-index: 20;
+      width: min(340px, calc(100vw - 48px));
+      background: var(--panel-bg);
+      border: 1px solid var(--panel-border);
+      border-radius: 16px;
+      padding: 24px 20px 20px;
+      backdrop-filter: blur(20px);
+      -webkit-backdrop-filter: blur(20px);
+
+      /* Hidden by default */
+      opacity: 0;
+      transform: translateY(12px) scale(0.97);
+      pointer-events: none;
+      transition: opacity 0.25s ease, transform 0.25s ease;
+    }
+
+    #settings-panel.open {
+      opacity: 1;
+      transform: translateY(0) scale(1);
+      pointer-events: auto;
+    }
+
+    /* Panel heading */
+    .panel-title {
+      font-family: 'Courier New', monospace;
+      font-size: 11px;
+      letter-spacing: 0.18em;
+      text-transform: uppercase;
+      color: rgba(255,255,255,0.35);
+      margin-bottom: 20px;
+    }
+
+    /* Individual setting row */
+    .setting-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 18px;
+    }
+
+    .setting-row:last-child { margin-bottom: 0; }
+
+    .setting-label {
+      font-family: 'Courier New', monospace;
+      font-size: 13px;
+      color: rgba(255,255,255,0.6);
+      letter-spacing: 0.04em;
+    }
+
+    /* Color picker — custom styled */
+    #color-picker {
+      width: 44px;
+      height: 28px;
+      border-radius: 6px;
+      border: 1.5px solid rgba(255,255,255,0.2);
+      background: none;
+      cursor: pointer;
+      padding: 2px;
+    }
+
+    #color-picker::-webkit-color-swatch-wrapper { padding: 0; }
+    #color-picker::-webkit-color-swatch { border: none; border-radius: 4px; }
+
+    /* Alarm time input */
+    #alarm-input {
+      font-family: 'Seven Segment', monospace;
+      font-size: 16px;
+      background: rgba(255,255,255,0.05);
+      border: 1px solid rgba(255,255,255,0.12);
+      border-radius: 6px;
+      color: var(--clock-color);
+      padding: 4px 8px;
+      width: 90px;
+      text-align: center;
+      cursor: pointer;
+      outline: none;
+      -webkit-appearance: none;
+    }
+
+    #alarm-input::-webkit-calendar-picker-indicator {
+      filter: invert(1);
+      opacity: 0.5;
+      cursor: pointer;
+    }
+
+    /* Alarm status indicator */
+    #alarm-status {
+      font-family: 'Courier New', monospace;
+      font-size: 11px;
+      letter-spacing: 0.05em;
+      color: rgba(255,255,255,0.25);
+      margin-top: 2px;
+      min-height: 14px;
+    }
+
+    #alarm-status.armed {
+      color: #aaff66;
+    }
+
+    /* Divider */
+    .panel-divider {
+      height: 1px;
+      background: var(--panel-border);
+      margin: 14px 0;
+    }
+
+    /* Sunrise duration input */
+    #sunrise-dur-input {
+      font-family: 'Courier New', monospace;
+      font-size: 14px;
+      width: 72px;
+      background: rgba(255,255,255,0.05);
+      border: 1px solid rgba(255,255,255,0.12);
+      border-radius: 6px;
+      color: rgba(255, 200, 50, 0.85);
+      padding: 4px 8px;
+      text-align: center;
+      outline: none;
+      -webkit-appearance: none;
+      -moz-appearance: textfield;
+    }
+    #sunrise-dur-input::-webkit-inner-spin-button,
+    #sunrise-dur-input::-webkit-outer-spin-button { -webkit-appearance: none; }
+
+    .setting-sublabel {
+      font-family: 'Courier New', monospace;
+      font-size: 10px;
+      color: rgba(255,255,255,0.25);
+      letter-spacing: 0.04em;
+      margin-top: 2px;
+    }
+
+    /* Sunrise simulate button */
+    #simulate-btn {
+      width: 100%;
+      padding: 10px 0;
+      border-radius: 8px;
+      border: 1px solid rgba(255, 180, 0, 0.35);
+      background: rgba(255, 180, 0, 0.07);
+      color: rgba(255, 200, 50, 0.85);
+      font-family: 'Courier New', monospace;
+      font-size: 12px;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      cursor: pointer;
+      transition: background 0.2s, border-color 0.2s;
+    }
+
+    #simulate-btn:hover {
+      background: rgba(255, 180, 0, 0.15);
+      border-color: rgba(255, 180, 0, 0.6);
+    }
+
+    #simulate-btn:active {
+      transform: scale(0.98);
+    }
+
+    /* ─── Alarm bell pulse indicator (top-left) ─────────────────────── */
+    #alarm-indicator {
+      position: fixed;
+      top: 20px;
+      left: 24px;
+      z-index: 10;
+      font-size: 18px;
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 0.3s;
+      filter: drop-shadow(0 0 6px rgba(255,220,0,0.8));
+    }
+
+    #alarm-indicator.armed { opacity: 0.15; }
+    #alarm-indicator.ringing {
+      opacity: 1;
+      animation: bell-pulse 0.8s ease-in-out infinite alternate;
+    }
+
+    @keyframes bell-pulse {
+      from { transform: rotate(-15deg) scale(1);   opacity: 0.7; }
+      to   { transform: rotate(15deg)  scale(1.15); opacity: 1;   }
+    }
+  </style>
+</head>
+<body>
+
+  <!-- Sunrise glow layer (z-index: 0) -->
+  <div id="sunrise-layer"></div>
+
+  <!-- Clock (z-index: 1) -->
+  <div id="clock-wrapper">
+    <div id="clock">
+      <!-- HH pair: two digit cells; data-d drives ::after content -->
+      <span id="clock-hh" class="clock-pair">
+        <span class="clock-digit" data-d="0"></span>
+        <span class="clock-digit" data-d="0"></span>
+      </span>
+      <span id="clock-colon">:</span>
+      <!-- MM pair -->
+      <span id="clock-mm" class="clock-pair">
+        <span class="clock-digit" data-d="0"></span>
+        <span class="clock-digit" data-d="0"></span>
+      </span>
+    </div>
+  </div>
+
+  <!-- Alarm indicator icon -->
+  <div id="alarm-indicator" title="Alarm armed">⏰</div>
+
+  <!-- Floating gear button -->
+  <button id="settings-btn" aria-label="Open settings" title="Settings">⚙</button>
+
+  <!-- Settings panel -->
+  <div id="settings-panel" role="dialog" aria-label="Clock settings">
+    <div class="panel-title">// Settings</div>
+
+    <!-- Clock color -->
+    <div class="setting-row">
+      <div>
+        <div class="setting-label">Clock Color</div>
+      </div>
+      <input type="color" id="color-picker" value="#ff2200" />
+    </div>
+
+    <div class="panel-divider"></div>
+
+    <!-- Alarm time -->
+    <div class="setting-row">
+      <div>
+        <div class="setting-label">Alarm</div>
+        <div id="alarm-status">not set</div>
+      </div>
+      <input type="time" id="alarm-input" />
+    </div>
+
+    <div class="panel-divider"></div>
+
+    <!-- Sunrise duration -->
+    <div class="setting-row">
+      <div>
+        <div class="setting-label">Sunrise Duration</div>
+        <div class="setting-sublabel">seconds (10 – 3600)</div>
+      </div>
+      <input type="number" id="sunrise-dur-input"
+             min="10" max="3600" step="10" value="60" />
+    </div>
+
+    <div class="panel-divider"></div>
+
+    <!-- Simulate sunrise -->
+    <button id="simulate-btn">☀ Simulate Sunrise</button>
+  </div>
+
+  <!-- NoSleep.js — prevents screen sleep across all browsers/mobile -->
+  <script src="https://cdn.jsdelivr.net/npm/nosleep.js@0.12.0/dist/NoSleep.min.js"></script>
+  <script>
+    'use strict';
+
+    // Initialize NoSleep — keeps screen awake on mobile and desktop
+    const noSleep = new NoSleep();
+    noSleep.enable();
+
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'visible') noSleep.enable();
+    });
+
+    /* ═══════════════════════════════════════════════════════════════════
+     *  STATE — all mutable application state in one object
+     * ═══════════════════════════════════════════════════════════════════ */
+    const state = {
+      clockColor:     '#ff2200',    // Active clock color
+      alarmTime:      '',           // "HH:MM" or empty
+      alarmFired:     false,        // Prevents re-triggering same minute
+      sunriseActive:  false,        // Is sunrise animation running?
+      sunriseStart:   null,         // performance.now() when sunrise began
+      sunriseDur:     60_000,       // Duration in ms (default 60 s — user-configurable)
+      iconTimer:      null,         // Timeout ID for icon fade-out
+      panelOpen:      false,        // Is settings panel visible?
+    };
+
+    /* ═══════════════════════════════════════════════════════════════════
+     *  DOM REFS
+     * ═══════════════════════════════════════════════════════════════════ */
+    const clockEl      = document.getElementById('clock');
+    const clockHhEl    = document.getElementById('clock-hh');
+    const clockMmEl    = document.getElementById('clock-mm');
+    const clockColonEl = document.getElementById('clock-colon');
+    // Individual digit cells — data-d attribute drives ::after CSS content
+    const hhDigits = clockHhEl.querySelectorAll('.clock-digit');
+    const mmDigits = clockMmEl.querySelectorAll('.clock-digit');
+    const wrapperEl    = document.getElementById('clock-wrapper');
+    const sunriseEl    = document.getElementById('sunrise-layer');
+    const settingsBtn  = document.getElementById('settings-btn');
+    const settingsPanel= document.getElementById('settings-panel');
+    const colorPicker  = document.getElementById('color-picker');
+    const alarmInput   = document.getElementById('alarm-input');
+    const alarmStatus  = document.getElementById('alarm-status');
+    const alarmIndic   = document.getElementById('alarm-indicator');
+    const simulateBtn  = document.getElementById('simulate-btn');
+    const sunriseDurInput = document.getElementById('sunrise-dur-input');
+
+    /* ═══════════════════════════════════════════════════════════════════
+     *  PERSISTENCE — load & save settings via localStorage
+     * ═══════════════════════════════════════════════════════════════════ */
+    function loadSettings() {
+      const saved = localStorage.getItem('dclock_settings');
+      if (!saved) return;
+      try {
+        const s = JSON.parse(saved);
+        if (s.clockColor)   state.clockColor  = s.clockColor;
+        if (s.alarmTime)    state.alarmTime   = s.alarmTime;
+        if (s.sunriseSecs)  state.sunriseDur  = s.sunriseSecs * 1000;
+      } catch (_) { /* ignore corrupt data */ }
+    }
+
+    function saveSettings() {
+      localStorage.setItem('dclock_settings', JSON.stringify({
+        clockColor:  state.clockColor,
+        alarmTime:   state.alarmTime,
+        sunriseSecs: Math.round(state.sunriseDur / 1000),
+      }));
+    }
+
+    /* ═══════════════════════════════════════════════════════════════════
+     *  COLOR — apply chosen color to CSS custom properties
+     * ═══════════════════════════════════════════════════════════════════ */
+    function applyColor(hex) {
+      state.clockColor = hex;
+      const r = document.documentElement;
+      r.style.setProperty('--clock-color', hex);
+      // Derive a translucent glow from the same hue
+      const [rr, gg, bb] = hexToRgb(hex);
+      r.style.setProperty('--glow-color', `rgba(${rr},${gg},${bb},0.4)`);
+    }
+
+    function hexToRgb(hex) {
+      const n = parseInt(hex.replace('#',''), 16);
+      return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
+    }
+
+    /* ═══════════════════════════════════════════════════════════════════
+     *  CLOCK — time display + fit-to-screen scaling
+     * ═══════════════════════════════════════════════════════════════════ */
+    let lastHH = '';
+    let lastMM = '';
+
+    function formatTime() {
+      const now = new Date();
+      return {
+        hh: String(now.getHours()).padStart(2, '0'),
+        mm: String(now.getMinutes()).padStart(2, '0'),
+      };
+    }
+
+    /**
+     * Detect orientation and scale font-size to fill the viewport.
+     *
+     * Landscape: "HH:MM" as a single row — scale to fill width OR height.
+     * Portrait : "HH" and "MM" stacked — each must fill the full width,
+     *            and both rows together must fit the viewport height.
+     */
+    function fitClock() {
+      const vw     = window.innerWidth;
+      const vh     = window.innerHeight;
+      const margin = 0.04;                 // 4% safe zone on each axis
+      const isPortrait = vh > vw;
+
+      // Measure at a known base size
+      clockEl.style.fontSize = '10px';
+
+      if (isPortrait) {
+        // In portrait the colon is hidden; measure one digit span (HH or MM —
+        // both are "00" / same width) to find how wide two digits render at 10px.
+        const { width: sw, height: sh } = clockHhEl.getBoundingClientRect();
+        const maxW = vw * (1 - 2 * margin);
+        const maxH = vh * (1 - 2 * margin);
+
+        // Scale so the two-digit span fills the width;
+        // also ensure two stacked rows fit the height.
+        const scaleByW = maxW / sw;
+        const scaleByH = maxH / (2 * sh);
+        const scale    = Math.min(scaleByW, scaleByH);
+        clockEl.style.fontSize = `${10 * scale}px`;
+      } else {
+        // Landscape: measure the whole flex row (HH + colon + MM)
+        const { width: tw, height: th } = clockEl.getBoundingClientRect();
+        const maxW = vw * (1 - 2 * margin);
+        const maxH = vh * (1 - 2 * margin);
+
+        const scaleByW = maxW / tw;
+        const scaleByH = maxH / th;
+        const scale    = Math.min(scaleByW, scaleByH);
+        clockEl.style.fontSize = `${10 * scale}px`;
+      }
+    }
+
+    function tickClock() {
+      const { hh, mm } = formatTime();
+      const changed = hh !== lastHH || mm !== lastMM;
+      if (changed) {
+        // Update data-d attribute on each cell; CSS ::after picks it up instantly
+        if (hh !== lastHH) {
+          hhDigits[0].dataset.d = hh[0];
+          hhDigits[1].dataset.d = hh[1];
+          lastHH = hh;
+        }
+        if (mm !== lastMM) {
+          mmDigits[0].dataset.d = mm[0];
+          mmDigits[1].dataset.d = mm[1];
+          lastMM = mm;
+        }
+        checkAlarm(`${hh}:${mm}`);
+      }
+    }
+
+    /* ═══════════════════════════════════════════════════════════════════
+     *  ALARM — compare current time to set alarm
+     * ═══════════════════════════════════════════════════════════════════ */
+    function checkAlarm(currentHHMM) {
+      if (!state.alarmTime || state.sunriseActive) return;
+
+      if (currentHHMM === state.alarmTime && !state.alarmFired) {
+        state.alarmFired = true;
+        triggerSunrise();
+        alarmIndic.classList.remove('armed');
+        alarmIndic.classList.add('ringing');
+      }
+
+      // Reset fired flag at next minute so alarm can re-arm tomorrow
+      if (currentHHMM !== state.alarmTime) {
+        state.alarmFired = false;
+      }
+    }
+
+    function updateAlarmUI() {
+      if (state.alarmTime) {
+        alarmInput.value = state.alarmTime;
+        alarmStatus.textContent = `armed for ${state.alarmTime}`;
+        alarmStatus.classList.add('armed');
+        alarmIndic.classList.add('armed');
+      } else {
+        alarmInput.value = '';
+        alarmStatus.textContent = 'not set';
+        alarmStatus.classList.remove('armed');
+        alarmIndic.classList.remove('armed');
+      }
+    }
+
+    /* ═══════════════════════════════════════════════════════════════════
+     *  SUNRISE ANIMATION — black → warm golden yellow over configurable duration
+     *  Uses requestAnimationFrame for butter-smooth interpolation.
+     *
+     *  Colour journey (perceptually smooth):
+     *    phase 0–50%  deep black  → dim amber   (lightness 0 → 12%)
+     *    phase 50–100% dim amber  → full yellow  (lightness 12 → 52%)
+     *  Saturation held at 100 %, hue at 42° (warm gold).
+     * ═══════════════════════════════════════════════════════════════════ */
+    function triggerSunrise() {
+      if (state.sunriseActive) return;
+      state.sunriseActive = true;
+      state.sunriseStart  = performance.now();
+      requestAnimationFrame(animateSunrise);
+    }
+
+    function animateSunrise(now) {
+      const elapsed  = now - state.sunriseStart;
+      const progress = Math.min(elapsed / state.sunriseDur, 1); // 0 → 1
+
+      // Ease-in-out for a natural dawn feel
+      const eased = easeInOutQuad(progress);
+
+      // Hue: stays around 42° (warm amber-gold)
+      const hue = 42;
+      // Saturation: ramps up from 0 → 100%
+      const sat = Math.round(eased * 100);
+      // Lightness: 0 → 52% (vivid yellow at peak)
+      const lit = Math.round(eased * 52);
+
+      sunriseEl.style.background = `hsl(${hue}, ${sat}%, ${lit}%)`;
+
+      if (progress < 1) {
+        requestAnimationFrame(animateSunrise);
+      } else {
+        // Sunrise complete — return to normal after 10 minutes
+        setTimeout(resetSunrise, 600_000);
+      }
+    }
+
+    function resetSunrise() {
+      state.sunriseActive = false;
+      state.sunriseStart  = null;
+      state.alarmFired    = false;
+      alarmIndic.classList.remove('ringing');
+      if (state.alarmTime) alarmIndic.classList.add('armed');
+
+      // Fade background back to black gently
+      sunriseEl.style.transition = 'background 3s ease';
+      sunriseEl.style.background = 'transparent';
+      setTimeout(() => { sunriseEl.style.transition = 'none'; }, 3100);
+    }
+
+    function easeInOutQuad(t) {
+      return t < 0.5 ? 2 * t * t : -1 + (4 - 2 * t) * t;
+    }
+
+    /* ═══════════════════════════════════════════════════════════════════
+     *  SETTINGS ICON — show on interaction, auto-hide after 3 s
+     * ═══════════════════════════════════════════════════════════════════ */
+    function showIcon() {
+      settingsBtn.classList.add('visible');
+      clearTimeout(state.iconTimer);
+      // Only auto-hide if panel is closed
+      if (!state.panelOpen) {
+        state.iconTimer = setTimeout(hideIcon, 3000);
+      }
+    }
+
+    function hideIcon() {
+      if (!state.panelOpen) {
+        settingsBtn.classList.remove('visible');
+      }
+    }
+
+    /* ═══════════════════════════════════════════════════════════════════
+     *  SETTINGS PANEL — open / close
+     * ═══════════════════════════════════════════════════════════════════ */
+    function openPanel() {
+      state.panelOpen = true;
+      settingsPanel.classList.add('open');
+      settingsBtn.classList.add('visible');
+      clearTimeout(state.iconTimer);
+    }
+
+    function closePanel() {
+      state.panelOpen = false;
+      settingsPanel.classList.remove('open');
+      // Start hide timer for icon
+      clearTimeout(state.iconTimer);
+      state.iconTimer = setTimeout(hideIcon, 2000);
+    }
+
+    function togglePanel() {
+      if (state.panelOpen) closePanel();
+      else openPanel();
+    }
+
+    /* ═══════════════════════════════════════════════════════════════════
+     *  FULLSCREEN — request immersive mode on first interaction
+     * ═══════════════════════════════════════════════════════════════════ */
+    function requestFullscreenOnce() {
+      if (document.fullscreenElement) return;
+      const el = document.documentElement;
+      const req = el.requestFullscreen
+               || el.webkitRequestFullscreen
+               || el.mozRequestFullScreen
+               || el.msRequestFullscreen;
+      if (req) req.call(el).catch(() => {});
+    }
+
+    /* ═══════════════════════════════════════════════════════════════════
+     *  EVENT LISTENERS
+     * ═══════════════════════════════════════════════════════════════════ */
+
+    // Tap / click anywhere on the clock area → show icon + request fullscreen
+    document.addEventListener('click', (e) => {
+      // Ignore clicks inside the settings panel itself
+      if (settingsPanel.contains(e.target)) return;
+      if (settingsBtn === e.target) return;
+      showIcon();
+      requestFullscreenOnce();
+    });
+
+    // Gear button
+    settingsBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      togglePanel();
+    });
+
+    // Click outside panel → close panel
+    document.addEventListener('click', (e) => {
+      if (state.panelOpen
+          && !settingsPanel.contains(e.target)
+          && e.target !== settingsBtn) {
+        closePanel();
+      }
+    });
+
+    // Color picker
+    colorPicker.addEventListener('input', (e) => {
+      applyColor(e.target.value);
+      saveSettings();
+    });
+
+    // Alarm time input
+    alarmInput.addEventListener('change', (e) => {
+      state.alarmTime  = e.target.value;   // "" or "HH:MM"
+      state.alarmFired = false;
+      saveSettings();
+      updateAlarmUI();
+    });
+
+    // Sunrise duration
+    sunriseDurInput.addEventListener('change', (e) => {
+      const secs = Math.max(10, Math.min(3600, parseInt(e.target.value, 10) || 60));
+      sunriseDurInput.value = secs;         // Clamp displayed value
+      state.sunriseDur = secs * 1000;
+      saveSettings();
+    });
+
+    // Simulate sunrise button
+    simulateBtn.addEventListener('click', () => {
+      // Reset any in-progress sunrise first
+      if (state.sunriseActive) {
+        state.sunriseActive = false;
+        sunriseEl.style.background = 'transparent';
+      }
+      setTimeout(triggerSunrise, 50);
+    });
+
+    // Resize / orientation change → re-fit clock
+    window.addEventListener('resize', fitClock);
+    window.addEventListener('orientationchange', () => setTimeout(fitClock, 100));
+
+    // Keyboard: Escape closes panel
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' && state.panelOpen) closePanel();
+    });
+
+    /* ═══════════════════════════════════════════════════════════════════
+     *  INIT
+     * ═══════════════════════════════════════════════════════════════════ */
+    function init() {
+      loadSettings();
+
+      // Sync UI controls with loaded state
+      colorPicker.value = state.clockColor;
+      applyColor(state.clockColor);
+      sunriseDurInput.value = Math.round(state.sunriseDur / 1000);
+      updateAlarmUI();
+
+      // Initial render
+      tickClock();
+      fitClock();
+
+      // Main clock interval — runs every 500 ms for sub-second responsiveness
+      setInterval(tickClock, 500);
+    }
+
+    init();
+  </script>
+  <!-- Service Worker registration — enables offline use & PWA install prompt -->
+  <script>
+    if ('serviceWorker' in navigator) {
+      window.addEventListener('load', () => {
+        navigator.serviceWorker.register('./sw.js')
+          .catch((err) => console.warn('SW registration failed:', err));
+      });
+    }
+  </script>
+</body>
+</html>
