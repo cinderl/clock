@@ -118,7 +118,7 @@ The app meets Android Chrome's installability criteria:
 | Requirement | How it is satisfied |
 |---|---|
 | HTTPS (or localhost) | Must be served over HTTPS when deployed |
-| Web app manifest | `manifest.json` — `display: fullscreen`, `orientation: any` |
+| Web app manifest | `manifest.json` — `display: standalone`, `orientation: any` |
 | Service worker | `sw.js` registered on `window load`; controls fetch |
 | Icons | 192×192 and 512×512 PNG icons with `purpose: any maskable` |
 

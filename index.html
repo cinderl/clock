@@ -1,4 +1,3 @@
-
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -646,6 +645,7 @@
     }
 
     function animateSunrise(now) {
+      if (!state.sunriseActive) return;
       const elapsed  = now - state.sunriseStart;
       const progress = Math.min(elapsed / state.sunriseDur, 1); // 0 → 1
 
@@ -798,6 +798,17 @@
         sunriseEl.style.background = 'transparent';
       }
       setTimeout(triggerSunrise, 50);
+    });
+
+    // Reset sunrise and alarm state when clicking anywhere on the screen
+    document.addEventListener('click', () => {
+      if (state.sunriseActive) {
+        resetSunrise();
+        state.alarmFired = false; // Reset alarm trigger
+        console.log("RESET");
+      }else{
+        console.log("RESET",state.sunriseActive);
+      }
     });
 
     // Resize / orientation change → re-fit clock
