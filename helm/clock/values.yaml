@@ -8,7 +8,7 @@ image:
 service:
   type: NodePort
   port: 80
-  nodePort: 30080
+  nodePort: 30080 # must match kind config extraPortMappings for 80 -> 30080
 
 resources:
   requests:

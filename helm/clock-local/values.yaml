@@ -1,0 +1,25 @@
+replicaCount: 1
+
+image:
+  repository: clock
+  tag: ci
+  pullPolicy: Never
+
+service:
+  type: ClusterIP   # Traefik handles external exposure now
+  port: 80
+
+ingress:
+  enabled: true
+  host: "" #clock.local   # change to your domain or IP-based host, For raw IP access (no DNS), leave host empty and use path routing only
+  path: "/clock" # optional, defaults to "/"
+  annotations: {}
+    # traefik.ingress.kubernetes.io/router.entrypoints: web
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 64Mi
+  limits:
+    cpu: 250m
+    memory: 128Mi
