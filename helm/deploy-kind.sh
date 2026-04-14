@@ -1,21 +1,30 @@
 #!/bin/bash
 
-CLUSTER="clock"
+CLUSTER="development-cluster"
+NAMESPACE="clock"
 RELEASE_NAME="my-clock-release"
 IMAGE_NAME="clock:ci"
 HELM_PATH="./clock-local"
 
 # 1. Create cluster (adding -q to keep it quiet if you prefer)
-# Recreate cluster
-kind delete cluster --name ${CLUSTER} > /dev/null 2>&1
-kind create cluster --config ./kind-config.yaml --name ${CLUSTER} --wait 60s
+# Recreate cluster if exist, ask if Yes, delete and create, if No, exit
+if kind get clusters | grep -q ${CLUSTER}; then
+    read -p "Cluster ${CLUSTER} already exists. Do you want to delete and recreate it (if n just continue)? (y/n) " answer
+    if [ "$answer" = "y" ]; then
+        kind delete cluster --name ${CLUSTER} > /dev/null 2>&1
+        kind create cluster --config ../helm/kind-config.yaml --name ${CLUSTER} --wait 60s
+    fi
+else
+        kind delete cluster --name ${CLUSTER} > /dev/null 2>&1
+        kind create cluster --config ../helm/kind-config.yaml --name ${CLUSTER} --wait 60s
+fi
 
 
 # Install Traefik Ingress Controller
 helm repo add traefik https://traefik.github.io/charts
 helm repo update
 
-helm install traefik traefik/traefik \
+helm upgrade --install traefik traefik/traefik \
   --namespace traefik --create-namespace \
   --set service.type=NodePort \
   --set ports.web.nodePort=30080 \
@@ -35,7 +44,7 @@ cd ${HELM_PATH}
 helm dependency build
 # The Traefik CRDs are required for the Ingress to work properly. We can apply them directly from the Traefik GitHub repository.
 # Using upgrade --install is safer if you run the script multiple times
-helm upgrade --install ${RELEASE_NAME} . 
+helm upgrade --install ${RELEASE_NAME} .  --namespace ${NAMESPACE} --create-namespace
 cd - > /dev/null
 #sleep 15 # Give it a moment to stabilize
 
